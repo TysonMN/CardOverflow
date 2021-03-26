@@ -1,11 +1,19 @@
 module Pentive.Client.Main
 
-open System
 open Bolero
 open Bolero.Html
 open Bolero.Remoting
 open Bolero.Remoting.Client
 open Bolero.Templating.Client
+
+open Counter
+
+
+let flip f b a = f a b
+
+let map get set f a =
+  a |> get |> f |> flip set a
+
 
 type Page =
     | Home
@@ -23,18 +31,18 @@ type Page =
             | Profile , Profile
                 -> true
             | _ -> false
+
+        static member optLogin = function Login x -> Some x | _ -> None
         
         member this.mapLogin f          = match this with Login m -> f m  | x -> x
-        member this. ifLogin f fallback = match this with Login m -> f m  | _ -> fallback
+        //member this. ifLogin f fallback = match this with Login m -> f m  | _ -> fallback
+        member this. ifLogin f fallback = this |> Page.optLogin |> Option.map f |> Option.defaultValue fallback
+
 
 module Page =
     let requireAuthenticated = function
-        | Home
-        | Counter
-        | Login _ -> false
-        
-        | Book
-        | Profile -> true
+        | Home | Counter | Login _ -> false
+        | Book | Profile -> true
 
     let toRedirect = function
         | Home    -> Redirect.Home
@@ -53,29 +61,18 @@ module Page =
 type Msg =
     | Navigated of Page
     | ErrorOccurred of exn
-    | CounterMsg of Counter.Msg
-    |   LoginMsg of Login  .Msg
-    |    BookMsg of Book   .Msg
-    |    AuthMsg of Auth   .Msg
-    |   ToastMsg of Toast  .Msg<string, Msg>
+    | CounterMsg of CounterMsg
+    |   LoginMsg of   Login.Msg
+    |    BookMsg of    Book.Msg
+    |    AuthMsg of    Auth.Msg
+    |   ToastMsg of   Toast.Msg<string, Msg>
 
 type Model =
-    {
-        Page: Page
-        Counter: Counter.Model
-        Book   : Book   .Model
-        Auth   : Auth   .Model
-        Toast  : Toast  .Model<string, Msg>
-    }
-
-let initModel =
-    {
-        Page = Home
-        Counter = Counter.initModel
-        Book    = Book   .initModel
-        Auth    = Auth   .initModel
-        Toast   = Toast  .initModel
-    }
+    { Page: Page
+      Counter: Counter
+      Book   : Book.Model
+      Auth   : Auth.Model
+      Toast  : Toast .Model<string, Msg> }
 
 type Cmd =
     | SetPage  of Page
@@ -83,54 +80,86 @@ type Cmd =
     | BookCmd  of Book.Cmd
     | ToastCmd of Elmish.Cmd<Toast.Msg<string, Msg>>
 
-let isPermitted page (auth: Auth.Model) =
-    if page |> Page.requireAuthenticated then
-        match auth with
-        | Auth.Authenticated _ -> true
-        | _ -> false
-    else true
 
-let update message (model: Model) =
-    match message with
-    | Navigated page ->
-        if isPermitted page model.Auth then
-            { model with Page = page }
-        else
-            { model with
-                Auth = model.Auth |> Auth.trySetRedirect (page |> Page.toRedirect)
-                Page = Login.initModel |> Login }
+module Model =
+  module Counter =
+    open Counter
+    let get m = m.Counter
+    let set v m = { m with Counter = v }
+    let map = map get set
+    let update = update >> map
+  module Book =
+    open Book
+    let get m = m.Book
+    let set v m = { m with Book = v }
+    let map = map get set
+    let update = update >> map
+  module Auth =
+    open Auth
+    let get m = m.Auth
+    let set v m = { m with Auth = v }
+    let map = map get set
+    let update = update >> map
 
-    | CounterMsg msg -> { model with Counter = model.Counter      |> Counter.update msg }
-    | BookMsg    msg -> { model with Book    = model.Book         |> Book   .update msg }
-    | LoginMsg   msg -> { model with Page    = model.Page.mapLogin ( Login  .update msg >> Login) }
-    | AuthMsg    msg -> { model with Auth    = model.Auth         |> Auth   .update msg }
-    | ToastMsg   msg -> { model with Toast   = model.Toast        |> Toast  .update msg }
 
-    | ErrorOccurred RemoteUnauthorizedException -> { model with Auth = Auth.logout }
-    | ErrorOccurred _                           -> model
-
-let toastErrorCmd =
-    Toast.error >> Toast.Add >> Elmish.Cmd.ofMsg >> ToastCmd >> List.singleton
-
-let generate message (model: Model) =
-    match message with
-    | Navigated page ->
-        if isPermitted page model.Auth then
-            match page with
-            | Book -> [BookCmd Book.Initialize]
-            | _ -> []
-        else
-            "You must login to view that page." |> toastErrorCmd
-
-    | BookMsg  msg ->                     Book .generate msg     |> List.map BookCmd
-    | LoginMsg msg -> model.Page.ifLogin (Login.generate msg) [] |> List.map AuthCmd
-    | AuthMsg  msg ->                     Auth .generate msg     |> List.map AuthCmd
-    | ToastMsg msg ->                     Toast.generate msg |> ToastCmd |> List.singleton
-
-    | ErrorOccurred RemoteUnauthorizedException -> "You have been logged out." |> toastErrorCmd
-    | ErrorOccurred ex ->                                           ex.Message |> toastErrorCmd
-
-    | CounterMsg _ -> []
+  let initModel =
+      {
+          Page = Home
+          Counter = Counter.init
+          Book    = Book   .initModel
+          Auth    = Auth   .initModel
+          Toast   = Toast  .initModel
+      }
+  
+  let isPermitted page (auth: Auth.Model) =
+      if page |> Page.requireAuthenticated then
+          match auth with
+          | Auth.Authenticated _ -> true
+          | _ -> false
+      else true
+  
+  let update message (model: Model) =
+      match message with
+      | Navigated page ->
+          if isPermitted page model.Auth then
+              { model with Page = page }
+          else
+              { model with
+                  Auth = model.Auth |> Auth.trySetRedirect (page |> Page.toRedirect)
+                  Page = Login.initModel |> Login }
+  
+      //| CounterMsg msg -> { model with Counter = model.Counter      |> Counter.update msg }
+      | CounterMsg msg -> msg |> Counter.update <| model
+      | BookMsg    msg -> msg |> Book.update <| model
+      | LoginMsg   msg -> { model with Page    = model.Page.mapLogin ( Login  .update msg >> Login) }
+      | AuthMsg    msg -> msg |> Auth.update <| model
+      | ToastMsg   msg -> { model with Toast   = model.Toast        |> Toast  .update msg }
+  
+      | ErrorOccurred RemoteUnauthorizedException -> Auth.logout |> Auth.set <| model
+      | ErrorOccurred _                           -> id <| model
+  
+  let toastErrorCmd =
+      Toast.error >> Toast.Add >> Elmish.Cmd.ofMsg >> ToastCmd >> List.singleton
+  
+  let generate message (model: Model) =
+      match message with
+      | Navigated page ->
+          if isPermitted page model.Auth then
+              match page with
+              | Book -> [BookCmd Book.Initialize]
+              | _ -> []
+          else
+              "You must login to view that page." |> toastErrorCmd
+  
+      | BookMsg  msg ->                     Book .generate msg     |> List.map BookCmd
+      | LoginMsg msg -> model.Page.ifLogin (Login.generate msg) [] |> List.map AuthCmd
+      | AuthMsg  msg ->                     Auth .generate msg     |> List.map AuthCmd
+      | ToastMsg msg ->                     Toast.generate msg |> ToastCmd |> List.singleton
+  
+      | ErrorOccurred RemoteUnauthorizedException -> "You have been logged out." |> toastErrorCmd
+      | ErrorOccurred ex ->                                           ex.Message |> toastErrorCmd
+  
+      | CounterMsg _ -> []
 
 open Elmish.UrlParser
 let parser =
@@ -242,10 +271,10 @@ type MyApp() =
         let bookRemote = this.Remote<Book.BookService>()
         let authRemote = this.Remote<Auth.AuthService>()
         let update msg model =
-            let cmds = generate msg model |> toCmds model authRemote bookRemote |> Cmd.batch
-            let model = update msg model
+            let cmds = Model.generate msg model |> toCmds model authRemote bookRemote |> Cmd.batch
+            let model = Model.update msg model
             model, cmds
-        Program.mkProgram (fun _ -> initModel, Auth.Initialize |> AuthCmd |> toCmd initModel authRemote bookRemote) update view
+        Program.mkProgram (fun _ -> Model.initModel, Auth.Initialize |> AuthCmd |> toCmd Model.initModel authRemote bookRemote) update view
         |> Program.withRouter router
 #if DEBUG
         |> Program.withHotReload

@@ -300,10 +300,11 @@ let private viewToastWrapper (classPosition : string) (render : IRenderer<_, _>)
                     let closeButton =
                         match n.WithCloseButton with
                         | true ->
-                            render.CloseButton (fun _ -> dispatch (Remove n))
+                            (fun _ -> dispatch (Remove n))
+                            |> render.CloseButton
                             |> Some
                         | false -> None
-                        |> ofOption
+                        |> Option.defaultValue empty
 
                     let layout =
                         match n.Icon with

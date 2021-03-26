@@ -1,39 +1,44 @@
 module Pentive.Client.Counter
 
-open System
-open Elmish
 open Bolero
-open Bolero.Html
-open Bolero.Remoting
-open Bolero.Remoting.Client
-open Bolero.Templating.Client
 
-type Model =
-    {
-        Counter: int
-    }
 
-let initModel =
-    {
-        Counter = 0
-    }
 
-type Msg =
-    | Incremented
-    | Decremented
-    | CounterUpdated of int
+let flip f b a = f a b
 
-let update message model =
-    match message with
-    | Incremented          -> { model with Counter = model.Counter + 1 }
-    | Decremented          -> { model with Counter = model.Counter - 1 }
-    | CounterUpdated value -> { model with Counter = value }
+let map get set f a =
+  a |> get |> f |> flip set a
+
+
+type Counter =
+  { Value: int }
+
+type CounterMsg =
+  | Increment
+  | Decrement
+  | SetValue of int
+
+
+module Counter =
+  module Value =
+    let get m = m.Value
+    let set v m = { m with Value = v }
+    let map = map get set
+    
+  let init =
+    { Value = 0 }
+
+  let update = function
+    | Increment -> (+)  1 |> Value.map
+    | Decrement -> (+) -1 |> Value.map
+    | SetValue value -> value |> Value.set
+
 
 type CounterTemplate = Template<"wwwroot/counter.html">
 
 let view model dispatch =
     CounterTemplate()
-        .Decrement(fun _ -> dispatch Decremented)
-        .Increment(fun _ -> dispatch Incremented)
-        .Value(model.Counter, dispatch << CounterUpdated)
+        .Decrement(fun _ -> dispatch Decrement)
+        .Increment(fun _ -> dispatch Increment)
+        .Value(model.Value, dispatch << SetValue)
         .Elt()
